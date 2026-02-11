@@ -8,6 +8,8 @@ const yahoo = new YahooFinance();
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const ticker = (searchParams.get("ticker") || "").toUpperCase();
+  const limitRaw = searchParams.get("limit");
+  const limit = Math.max(1, Math.min(50, Number(limitRaw || 5) || 5));
   if (!ticker) return Response.json({ error: "Missing ticker" }, { status: 400 });
 
   try {
@@ -23,6 +25,7 @@ export async function GET(req: Request) {
 
     return Response.json({
   ticker,
+  
   targets: {
     mean: fd?.targetMeanPrice ?? null,
     high: fd?.targetHighPrice ?? null,
@@ -33,7 +36,7 @@ export async function GET(req: Request) {
     recommendationKey: fd?.recommendationKey ?? null,
     recommendationMean: fd?.recommendationMean ?? null,
   },
-  upgrades: summary?.upgradeDowngradeHistory?.history?.slice(0, 5) ?? [],
+  upgrades: summary?.upgradeDowngradeHistory?.history?.slice(0, limit) ?? [],
 });
   } catch (e: any) {
     return Response.json(
