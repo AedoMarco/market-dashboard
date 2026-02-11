@@ -56,6 +56,25 @@ type AnalystPayload = {
 
 const BIG7 = ["AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "TSLA"];
 
+// 13 “otras” importantes de EEUU (puedes ajustar)
+const US_TOP_13 = [
+  "BRK-B",
+  "JPM",
+  "JNJ",
+  "V",
+  "PG",
+  "XOM",
+  "UNH",
+  "HD",
+  "MA",
+  "BAC",
+  "WMT",
+  "AVGO",
+  "COST",
+];
+
+const PROJECTIONS_UNIVERSE = [...BIG7, ...US_TOP_13];
+
 const CHILE = [
   "LTM.SN",
   "SQM-B.SN",
@@ -134,19 +153,28 @@ function formatAnalystDate(u: any) {
   const raw = u?.epochGradeDate ?? u?.gradeDate ?? u?.epochDate;
   if (!raw) return "—";
 
-  // ISO string
   if (typeof raw === "string") {
     const d = new Date(raw);
     return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString();
   }
 
-  // Unix seconds
   if (typeof raw === "number") {
     const d = new Date(raw * 1000);
     return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString();
   }
 
   return "—";
+}
+
+function parseAnalystTime(u: any) {
+  const raw = u?.epochGradeDate ?? u?.gradeDate ?? u?.epochDate;
+  if (!raw) return 0;
+  if (typeof raw === "string") {
+    const t = new Date(raw).getTime();
+    return Number.isNaN(t) ? 0 : t;
+  }
+  if (typeof raw === "number") return raw * 1000;
+  return 0;
 }
 
 export default function Page() {
@@ -159,13 +187,34 @@ export default function Page() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState("");
 
-  // Analyst data (desplegable)
+  // Analyst data (panel superior del gráfico)
   const [analyst, setAnalyst] = useState<AnalystPayload | null>(null);
   const [loadingAnalyst, setLoadingAnalyst] = useState(false);
   const [showAnalyst, setShowAnalyst] = useState(false);
 
-  const allTickers = useMemo(() => [...BIG7, ...CHILE], []);
+  // Proyecciones (sección nueva)
+  const [projTicker, setProjTicker] = useState<string>("AAPL");
+  const [projRows, setProjRows] = useState<any[]>([]);
+  const [loadingProj, setLoadingProj] = useState(false);
+  const [projError, setProjError] = useState("");
+
+  // Snapshot debe incluir BIG7 + US_TOP_13 + CHILE para precio/variación del dropdown
+  const allTickers = useMemo(() => [...BIG7, ...US_TOP_13, ...CHILE], []);
   const selectedQuote = snapshot[selected];
+  const tickerNameMap = useMemo(() => {
+  const m: Record<string, string> = {};
+  for (const [tkr, row] of Object.entries(snapshot)) {
+    if (row && (row as any).ok && (row as any).name) {
+      m[tkr] = (row as any).name;
+    }
+  }
+  return m;
+}, [snapshot]);
+
+function displayName(ticker: string) {
+  return tickerNameMap[ticker] || cleanTicker(ticker);
+}
+
 
   async function loadSnapshot() {
     setLoadingSnapshot(true);
@@ -226,6 +275,27 @@ export default function Page() {
     }
   }
 
+  async function loadProjections(ticker: string) {
+    setLoadingProj(true);
+    setProjError("");
+    try {
+      const res = await fetch(
+        `/api/analyst?ticker=${encodeURIComponent(ticker)}&limit=10`
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to load projections");
+
+      const rows = Array.isArray(json?.upgrades) ? json.upgrades : [];
+      const sorted = [...rows].sort((a, b) => parseAnalystTime(b) - parseAnalystTime(a));
+      setProjRows(sorted.slice(0, 10));
+    } catch (e: any) {
+      setProjError(e?.message || "Projections error");
+      setProjRows([]);
+    } finally {
+      setLoadingProj(false);
+    }
+  }
+
   useEffect(() => {
     loadSnapshot();
     const id = setInterval(loadSnapshot, 60_000);
@@ -239,6 +309,11 @@ export default function Page() {
     setShowAnalyst(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, range]);
+
+  useEffect(() => {
+    loadProjections(projTicker);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projTicker]);
 
   const selectedTitle = cleanTicker(selected);
 
@@ -262,6 +337,16 @@ export default function Page() {
   const t = analyst?.targets;
   const c = analyst?.consensus;
 
+  // Precio actual + variación para el ticker seleccionado en Proyecciones
+  const projQuote = snapshot[projTicker];
+  const projPrice =
+    projQuote && projQuote.ok
+      ? formatPrice(projQuote.ticker, projQuote.price, projQuote.currency)
+      : "—";
+  const projCcy = projQuote && projQuote.ok ? projQuote.currency : "";
+  const projPct =
+    projQuote && projQuote.ok ? pctMeta(projQuote.changePercent) : pctMeta(undefined);
+
   return (
     <main
       style={{
@@ -275,18 +360,13 @@ export default function Page() {
       <div style={{ maxWidth: 1120, margin: "0 auto" }}>
         {/* HEADER */}
         <header style={{ marginBottom: 18 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "baseline",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
             <h1 style={{ margin: 0, fontSize: 28, letterSpacing: -0.5 }}>
               Market Dashboard
             </h1>
-            <span style={{ color: "#6b7280" }}>Big Techs + Chile (vista única)</span>
+            <span style={{ color: "#6b7280" }}>
+              Big Techs + Chile (vista única)
+            </span>
           </div>
         </header>
 
@@ -341,7 +421,6 @@ export default function Page() {
 
         {/* PANEL: CHART */}
         <div style={{ height: 18 }} />
-
         <div
           style={{
             background: "#fff",
@@ -421,7 +500,7 @@ export default function Page() {
             </div>
           </div>
 
-          {/* ANALYST (desplegable real) */}
+          {/* ANALYST (desplegable) */}
           <div
             style={{
               padding: "12px 16px",
@@ -482,7 +561,6 @@ export default function Page() {
                   </div>
                 ) : (
                   <>
-                    {/* Metrics */}
                     <div
                       style={{
                         display: "grid",
@@ -506,9 +584,7 @@ export default function Page() {
                       />
                       <Metric
                         label="# Analistas"
-                        value={
-                          t?.analystCount != null ? String(t.analystCount) : "—"
-                        }
+                        value={t?.analystCount != null ? String(t.analystCount) : "—"}
                       />
                       <div>
                         <div style={{ fontSize: 12, color: "#6b7280" }}>Consenso</div>
@@ -519,9 +595,7 @@ export default function Page() {
                               alignItems: "center",
                               padding: "6px 10px",
                               borderRadius: 999,
-                              border: `1px solid ${
-                                consensusPillStyle(c?.recommendationKey).border
-                              }`,
+                              border: `1px solid ${consensusPillStyle(c?.recommendationKey).border}`,
                               background: consensusPillStyle(c?.recommendationKey).bg,
                               color: consensusPillStyle(c?.recommendationKey).color,
                               fontWeight: 900,
@@ -533,13 +607,7 @@ export default function Page() {
                           </span>
 
                           {typeof c?.recommendationMean === "number" && (
-                            <span
-                              style={{
-                                marginLeft: 10,
-                                color: "#6b7280",
-                                fontSize: 12,
-                              }}
-                            >
+                            <span style={{ marginLeft: 10, color: "#6b7280", fontSize: 12 }}>
                               score: {c.recommendationMean.toFixed(2)}
                             </span>
                           )}
@@ -547,7 +615,6 @@ export default function Page() {
                       </div>
                     </div>
 
-                    {/* Upgrades Table */}
                     {Array.isArray(analyst?.upgrades) && analyst.upgrades.length > 0 ? (
                       <div style={{ marginTop: 16 }}>
                         <div style={{ fontWeight: 900, fontSize: 13, marginBottom: 8 }}>
@@ -571,19 +638,11 @@ export default function Page() {
                               }}
                             >
                               <div style={{ color: "#6b7280" }}>{formatAnalystDate(u)}</div>
-
                               <div style={{ fontWeight: 800 }}>{u.firm || "—"}</div>
-
                               <div style={{ fontWeight: 800 }}>
                                 {(u.fromGrade || "—")} → {(u.toGrade || "—")}
                                 {u.action ? (
-                                  <span
-                                    style={{
-                                      marginLeft: 8,
-                                      color: "#6b7280",
-                                      fontWeight: 700,
-                                    }}
-                                  >
+                                  <span style={{ marginLeft: 8, color: "#6b7280", fontWeight: 700 }}>
                                     ({u.action})
                                   </span>
                                 ) : null}
@@ -616,10 +675,6 @@ export default function Page() {
                             </div>
                           ))}
                         </div>
-
-                        <div style={{ marginTop: 6, fontSize: 12, color: "#6b7280" }}>
-                          Columnas: fecha · entidad · recomendación · target anterior · target nuevo
-                        </div>
                       </div>
                     ) : (
                       <div style={{ marginTop: 12, fontSize: 13, color: "#6b7280" }}>
@@ -643,6 +698,208 @@ export default function Page() {
                 <Line type="monotone" dataKey="close" dot={false} strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* SECTION: PROYECCIONES */}
+        <div style={{ height: 18 }} />
+        <div
+          style={{
+            background: "#fff",
+            border: "1px solid #eef0f4",
+            borderRadius: 18,
+            boxShadow: "0 10px 30px rgba(17,24,39,0.06)",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              padding: 16,
+              borderBottom: "1px solid #eef0f4",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: 12,
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 12, color: "#6b7280" }}>Sección</div>
+              <div style={{ fontSize: 18, fontWeight: 900 }}>Proyecciones</div>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ color: "#6b7280", fontSize: 13 }}>Acción</span>
+              <select
+                value={projTicker}
+                onChange={(e) => setProjTicker(e.target.value)}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 12,
+                  border: "1px solid #e5e7eb",
+                  background: "#fff",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                {PROJECTIONS_UNIVERSE.map((tkr) => (
+  <option key={tkr} value={tkr}>
+    {displayName(tkr)} ({cleanTicker(tkr)})
+  </option>
+))}
+              </select>
+            </div>
+          </div>
+
+          {/* Precio actual + variación */}
+          <div
+            style={{
+              padding: "12px 16px",
+              borderBottom: "1px solid #eef0f4",
+              background: "#fafafa",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: 12,
+            }}
+          >
+            <div style={{ fontWeight: 900 }}>
+  {displayName(projTicker)}{" "}
+  <span style={{ fontWeight: 700, color: "#6b7280", fontSize: 12 }}>
+    ({cleanTicker(projTicker)}) · precio actual
+  </span>
+</div>
+
+
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 18, fontWeight: 900 }}>
+                {projPrice}
+                <span style={{ fontSize: 12, marginLeft: 8, color: "#6b7280" }}>
+                  {projCcy}
+                </span>
+              </div>
+              <div style={{ color: projPct.color, fontWeight: 800, fontSize: 13 }}>
+                <span style={{ marginRight: 6 }}>{projPct.arrow}</span>
+                {projPct.text}
+              </div>
+            </div>
+          </div>
+
+          {projError && (
+            <div
+              style={{
+                padding: 12,
+                background: "#fff1f2",
+                borderTop: "1px solid #fecdd3",
+                color: "#9f1239",
+              }}
+            >
+              {projError}
+            </div>
+          )}
+
+          {/* Tabla */}
+          <div style={{ padding: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+              <div style={{ fontWeight: 900, fontSize: 14 }}>
+                Últimas 10 proyecciones (más reciente → más antigua)
+              </div>
+              <div style={{ color: "#6b7280", fontSize: 13 }}>
+                {loadingProj ? "Cargando..." : `${projRows.length} filas`}
+              </div>
+            </div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
+                <thead>
+                  <tr style={{ textAlign: "left", color: "#6b7280", fontSize: 12 }}>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid #eef0f4" }}>
+                      Fecha
+                    </th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid #eef0f4" }}>
+                      Entidad
+                    </th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid #eef0f4" }}>
+                      Recomendación
+                    </th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid #eef0f4" }}>
+                      Acción PT
+                    </th>
+                    <th
+                      style={{
+                        padding: "10px 8px",
+                        borderBottom: "1px solid #eef0f4",
+                        textAlign: "right",
+                      }}
+                    >
+                      PT anterior
+                    </th>
+                    <th
+                      style={{
+                        padding: "10px 8px",
+                        borderBottom: "1px solid #eef0f4",
+                        textAlign: "right",
+                      }}
+                    >
+                      PT nuevo
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {projRows.map((u: any, i: number) => {
+                    const dateTxt = formatAnalystDate(u);
+
+                    const prior =
+                      typeof u?.priorPriceTarget === "number" && u.priorPriceTarget > 0
+                        ? formatNumber(u.priorPriceTarget, 2)
+                        : "—";
+                    const curr =
+                      typeof u?.currentPriceTarget === "number" && u.currentPriceTarget > 0
+                        ? formatNumber(u.currentPriceTarget, 2)
+                        : "—";
+
+                    return (
+                      <tr key={i} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                        <td style={{ padding: "10px 8px", fontSize: 13, color: "#374151" }}>
+                          {dateTxt}
+                        </td>
+                        <td style={{ padding: "10px 8px", fontSize: 13, fontWeight: 800 }}>
+                          {u?.firm || "—"}
+                        </td>
+                        <td style={{ padding: "10px 8px", fontSize: 13, fontWeight: 800 }}>
+                          {(u?.fromGrade || "—")} → {(u?.toGrade || "—")}
+                        </td>
+                        <td style={{ padding: "10px 8px", fontSize: 13, color: "#374151" }}>
+                          {u?.priceTargetAction || "—"}
+                        </td>
+                        <td style={{ padding: "10px 8px", fontSize: 13, textAlign: "right" }}>
+                          {prior}
+                        </td>
+                        <td
+                          style={{
+                            padding: "10px 8px",
+                            fontSize: 13,
+                            fontWeight: 900,
+                            textAlign: "right",
+                          }}
+                        >
+                          {curr}
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {!loadingProj && projRows.length === 0 && (
+                    <tr>
+                      <td colSpan={6} style={{ padding: 14, color: "#6b7280", fontSize: 13 }}>
+                        No hay proyecciones disponibles para este ticker.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
