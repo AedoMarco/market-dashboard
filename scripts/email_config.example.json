@@ -1,0 +1,8 @@
+{
+  "gmail_user": "tu_email@gmail.com",
+  "gmail_app_password": "xxxx xxxx xxxx xxxx",
+  "recipients": [
+    "destinatario1@example.com",
+    "destinatario2@example.com"
+  ]
+}
