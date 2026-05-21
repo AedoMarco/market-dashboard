@@ -1,0 +1,27 @@
+name: Daily Financial News Emailer
+
+on:
+  schedule:
+    - cron: '0 13 * * *'  # 9:00 AM Santiago (UTC-4)
+  workflow_dispatch:       # permite ejecutar manualmente desde GitHub
+
+jobs:
+  send-email:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install feedparser anthropic yfinance -q
+
+      - name: Run emailer
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 scripts/financial_news_emailer.py
